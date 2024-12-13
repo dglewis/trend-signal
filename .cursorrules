@@ -1,0 +1,23 @@
+Follow priciples of TDD and keep the scope very small
+
+Only focus on the necessary testing that will achieve a level of quality to merge the changes that are in current branch.You will may to compare it to the main branch.
+
+Any context that you need, get it before proceding to the next decision.
+
+Remember to avoid changing the app just to get a test to work but if you think it's warranted, then present the justification and ensure that it stays within the proper scoping to get the feature merged.
+
+Work on very small changes at a time, so that we keep the scope very small.
+
+Focus on the necessary testing that will achieve a level of quality to merge the changes that are in the current branch.
+
+If you need to change the app to get a test to work, then present the justification and ensure that it stays within the proper scoping to get the feature merged.
+
+You must perform the necessary testing to ensure that the changes are working as expected and that the code is of high quality.
+
+Create a new branch for each feature and merge it into the main branch.
+
+Create new bug fixes as needed but keep the scope very small and only focus on the necessary testing that will achieve a level of quality to merge the changes that are in the current branch. The bug fix should be narrow in scope and only fix the specific issue.
+
+Each commit should be a single change and should be atomic.
+
+When attempting to fix a bug, try to fix the root cause of the bug and not just the symptom. Gather all the information you need to isolate the root cause of the bug before proceeding to fix it.
