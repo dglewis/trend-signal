@@ -14,7 +14,13 @@
 ### Technical Analysis
 - [x] MACD calculation
 - [x] EMA (Exponential Moving Average) calculation
+- [x] RSI (Relative Strength Index) calculation
 - [x] Basic scoring mechanism
+  - [x] MACD signal (25 points)
+  - [x] EMA trend (25 points)
+  - [x] Volume analysis (20 points)
+  - [x] Price vs EMA (15 points)
+  - [x] RSI neutral zone (15 points)
 - [x] Support for both stocks and cryptocurrencies
 
 ### Infrastructure
@@ -26,14 +32,17 @@
 ### Testing
 - [x] Unit tests for data fetching
 - [x] Unit tests for technical analysis
+  - [x] MACD tests
+  - [x] EMA tests
+  - [x] RSI tests
+  - [x] Scoring system tests
 - [x] Error handling tests
 - [x] Cryptocurrency-specific tests
 
 ## Partially Implemented Features 🟨
 
 ### Technical Analysis
-- [ ] Expand technical indicators beyond MACD
-  - [ ] RSI (Relative Strength Index)
+- [ ] Expand technical indicators beyond MACD and RSI
   - [ ] More advanced trend indicators
 - [ ] More sophisticated scoring algorithm
 
