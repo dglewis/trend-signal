@@ -32,6 +32,11 @@ TOOLTIPS = {
     Long-term Exponential Moving Average (EMA):
     A type of moving average that places greater weight on recent data.
     The long-term EMA (26 periods) shows the longer-term trend direction.
+    """,
+    'crypto_volume': """
+    Cryptocurrency Trading Volume:
+    24-hour trading volume in USD.
+    Higher volumes typically indicate more market activity and liquidity.
     """
 }
 
@@ -85,6 +90,13 @@ def main():
         index=1
     )
 
+    # Add force refresh option
+    force_refresh = st.sidebar.checkbox(
+        "Force Data Refresh",
+        value=False,
+        help="If checked, bypass cache and fetch fresh data from API"
+    )
+
     if st.sidebar.button("Analyze"):
         try:
             # Input validation
@@ -96,7 +108,8 @@ def main():
             data = fetcher.get_intraday_data(
                 symbol=symbol,
                 interval=interval,
-                market_type='crypto' if market_type == 'Cryptocurrency' else 'stock'
+                market_type='crypto' if market_type == 'Cryptocurrency' else 'stock',
+                force_refresh=force_refresh
             )
 
             analyzer = TechnicalAnalyzer(data)
@@ -105,6 +118,12 @@ def main():
             # Save to database
             db = DatabaseManager()
             db.save_analysis(symbol, analysis_results)
+
+            # Display cache status
+            if not force_refresh:
+                st.info("✨ Using cached data (if available)")
+            else:
+                st.info("🔄 Using fresh data from API")
 
             # Display results with tooltips
             col1, col2, col3, col4 = st.columns(4)

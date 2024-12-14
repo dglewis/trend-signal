@@ -1,8 +1,10 @@
 import pytest
 import pandas as pd
-from unittest.mock import Mock, patch
-from src.data_fetcher import DataFetcher
-from datetime import datetime
+from unittest.mock import Mock, patch, call
+from src.data_fetcher import DataFetcher, APIError, DataFetcherError, InvalidSymbolError
+from datetime import datetime, timedelta
+import numpy as np
+import json
 
 @pytest.fixture
 def mock_alpha_vantage_api_key():
@@ -27,6 +29,61 @@ def mock_time_series():
         mock_ts.return_value.get_daily.return_value = (mock_data, None)
         yield mock_ts
 
+@pytest.fixture
+def mock_requests():
+    with patch('src.data_fetcher.requests') as mock_req:
+        # Create a mock response that mimics Alpha Vantage crypto response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "Meta Data": {
+                "1. Information": "Daily Prices and Volumes for Digital Currency",
+                "2. Digital Currency Code": "BTC",
+                "3. Digital Currency Name": "Bitcoin",
+                "4. Market Code": "USD",
+                "5. Market Name": "United States Dollar",
+                "6. Last Refreshed": "2023-12-01 00:00:00",
+                "7. Time Zone": "UTC"
+            },
+            "Time Series (Digital Currency Daily)": {
+                "2023-12-01": {
+                    "1a. open (USD)": "50000.00000",
+                    "1b. open (USD)": "50000.00000",
+                    "2a. high (USD)": "50100.00000",
+                    "2b. high (USD)": "50100.00000",
+                    "3a. low (USD)": "49900.00000",
+                    "3b. low (USD)": "49900.00000",
+                    "4a. close (USD)": "50050.00000",
+                    "4b. close (USD)": "50050.00000",
+                    "5. volume": "100.00000",
+                    "6. market cap (USD)": "5005000.00000"
+                },
+                "2023-11-30": {
+                    "1a. open (USD)": "49900.00000",
+                    "1b. open (USD)": "49900.00000",
+                    "2a. high (USD)": "50000.00000",
+                    "2b. high (USD)": "50000.00000",
+                    "3a. low (USD)": "49800.00000",
+                    "3b. low (USD)": "49800.00000",
+                    "4a. close (USD)": "50000.00000",
+                    "4b. close (USD)": "50000.00000",
+                    "5. volume": "90.00000",
+                    "6. market cap (USD)": "4500000.00000"
+                }
+            }
+        }
+        mock_req.get.return_value = mock_response
+        yield mock_req
+
+@pytest.fixture
+def mock_database():
+    with patch('src.data_fetcher.DatabaseManager') as mock_db:
+        mock_instance = Mock()
+        mock_instance.get_cached_data.return_value = None
+        mock_instance.save_analysis.return_value = None
+        mock_db.return_value = mock_instance
+        yield mock_instance
+
 def test_data_fetcher_initialization(mock_alpha_vantage_api_key):
     """Test that DataFetcher initializes correctly with API key"""
     fetcher = DataFetcher()
@@ -38,7 +95,199 @@ def test_data_fetcher_initialization_no_api_key():
         with pytest.raises(ValueError, match="Alpha Vantage API key not found"):
             DataFetcher()
 
-def test_get_intraday_data(mock_time_series, mock_alpha_vantage_api_key):
+def test_get_crypto_data(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test fetching cryptocurrency data"""
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('BTC', market_type='crypto')
+
+    # Verify the API was called correctly
+    mock_requests.get.assert_called_once_with(
+        'https://www.alphavantage.co/query',
+        params={
+            'function': 'DIGITAL_CURRENCY_DAILY',
+            'symbol': 'BTC',
+            'market': 'USD',
+            'apikey': 'dummy_key'
+        }
+    )
+
+    # Verify data was transformed correctly
+    assert isinstance(data, pd.DataFrame)
+    assert all(col in data.columns for col in ['1. open', '2. high', '3. low', '4. close', '5. volume'])
+    assert len(data) == 2
+    assert isinstance(data.index, pd.DatetimeIndex)
+
+def test_get_crypto_data_with_cache(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test that cached crypto data is returned when available"""
+    # Setup mock cached data
+    cached_data = {
+        '1. open': {'2023-12-01': 50000.0},
+        '2. high': {'2023-12-01': 50100.0},
+        '3. low': {'2023-12-01': 49900.0},
+        '4. close': {'2023-12-01': 50050.0},
+        '5. volume': {'2023-12-01': 100.0}
+    }
+    mock_database.get_cached_data.return_value = cached_data
+
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('BTC', market_type='crypto', force_refresh=False)
+
+    # Verify cache was used
+    mock_database.get_cached_data.assert_called_once_with('BTC', max_age_minutes=5)
+    mock_requests.get.assert_not_called()
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_get_crypto_data_force_refresh(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test that force_refresh bypasses cache for crypto data"""
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('BTC', market_type='crypto', force_refresh=True)
+
+    # Verify cache was not used
+    mock_database.get_cached_data.assert_not_called()
+    mock_requests.get.assert_called_once()
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_get_crypto_data_invalid_symbol(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test error handling for invalid crypto symbol"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"Error Message": "Invalid API call"}
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(InvalidSymbolError, match="Invalid symbol: INVALID"):
+        fetcher.get_intraday_data('INVALID', market_type='crypto')
+
+    # Verify the API was called correctly
+    mock_requests.get.assert_called_once_with(
+        'https://www.alphavantage.co/query',
+        params={
+            'function': 'DIGITAL_CURRENCY_DAILY',
+            'symbol': 'INVALID',
+            'market': 'USD',
+            'apikey': 'dummy_key'
+        }
+    )
+
+def test_get_crypto_data_rate_limit(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test rate limit handling for crypto data"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"Note": "API call frequency exceeded"}
+    mock_requests.get.return_value = mock_response
+
+    # Setup mock cached data for fallback
+    cached_data = {
+        '1. open': {'2023-12-01': 50000.0},
+        '2. high': {'2023-12-01': 50100.0},
+        '3. low': {'2023-12-01': 49900.0},
+        '4. close': {'2023-12-01': 50050.0},
+        '5. volume': {'2023-12-01': 100.0}
+    }
+    mock_database.get_cached_data.side_effect = [None, cached_data]  # First call returns None, second call returns data
+
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('BTC', market_type='crypto')
+
+    # Verify fallback behavior
+    assert mock_database.get_cached_data.call_count == 2
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_get_crypto_data_api_error(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test handling of API errors"""
+    mock_response = Mock()
+    mock_response.status_code = 500
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(APIError, match="API request failed with status code 500"):
+        fetcher.get_intraday_data('BTC', market_type='crypto')
+
+def test_get_crypto_data_malformed_response(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test handling of malformed API response"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"unexpected": "format"}
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(DataFetcherError, match="Unexpected API response format for BTC"):
+        fetcher.get_intraday_data('BTC', market_type='crypto')
+
+def test_cache_hit(mock_alpha_vantage_api_key, mock_time_series, mock_database):
+    """Test that cached data is returned when available"""
+    # Setup mock cached data
+    cached_data = {
+        '1. open': {'2023-12-01 10:00:00': 100.0},
+        '2. high': {'2023-12-01 10:00:00': 102.0},
+        '3. low': {'2023-12-01 10:00:00': 98.0},
+        '4. close': {'2023-12-01 10:00:00': 101.0},
+        '5. volume': {'2023-12-01 10:00:00': 1000}
+    }
+    mock_database.get_cached_data.return_value = cached_data
+
+    # Test
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('AAPL', force_refresh=False)
+
+    # Verify cache was used
+    mock_database.get_cached_data.assert_called_once_with('AAPL', max_age_minutes=5)
+    mock_time_series.return_value.get_intraday.assert_not_called()
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_force_refresh_bypass_cache(mock_alpha_vantage_api_key, mock_time_series, mock_database):
+    """Test that force_refresh bypasses cache"""
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('AAPL', force_refresh=True)
+
+    # Verify cache was not used
+    mock_database.get_cached_data.assert_not_called()
+    mock_time_series.return_value.get_intraday.assert_called_once()
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_rate_limit_fallback_to_cache(mock_alpha_vantage_api_key, mock_time_series, mock_database):
+    """Test fallback to cache when rate limit is hit"""
+    # Setup mock to raise rate limit error
+    mock_time_series.return_value.get_intraday.side_effect = ValueError("API rate limit reached")
+
+    # Setup mock cached data
+    cached_data = {
+        '1. open': {'2023-12-01 10:00:00': 100.0},
+        '2. high': {'2023-12-01 10:00:00': 102.0},
+        '3. low': {'2023-12-01 10:00:00': 98.0},
+        '4. close': {'2023-12-01 10:00:00': 101.0},
+        '5. volume': {'2023-12-01 10:00:00': 1000}
+    }
+    mock_database.get_cached_data.side_effect = [None, cached_data]  # First call returns None, second call returns data
+
+    # Test
+    fetcher = DataFetcher()
+    data = fetcher.get_intraday_data('AAPL')
+
+    # Verify fallback behavior
+    assert mock_database.get_cached_data.call_count == 2
+    assert mock_database.get_cached_data.call_args_list[0] == call('AAPL', max_age_minutes=5)
+    assert mock_database.get_cached_data.call_args_list[1] == call('AAPL', max_age_minutes=15)
+    assert isinstance(data, pd.DataFrame)
+    assert not data.empty
+
+def test_rate_limit_no_cache_available(mock_alpha_vantage_api_key, mock_time_series, mock_database):
+    """Test rate limit error when no cache is available"""
+    # Setup mock to raise rate limit error
+    mock_time_series.return_value.get_intraday.side_effect = ValueError("API rate limit reached")
+    mock_database.get_cached_data.return_value = None
+
+    # Test
+    fetcher = DataFetcher()
+    with pytest.raises(APIError, match="API rate limit reached"):
+        fetcher.get_intraday_data('AAPL')
+
+def test_get_intraday_data(mock_alpha_vantage_api_key, mock_time_series, mock_database):
     """Test fetching intraday data"""
     fetcher = DataFetcher()
     data = fetcher.get_intraday_data('AAPL')
@@ -48,20 +297,87 @@ def test_get_intraday_data(mock_time_series, mock_alpha_vantage_api_key):
     assert all(col in data.columns for col in ['1. open', '2. high', '3. low', '4. close', '5. volume'])
     assert isinstance(data.index, pd.DatetimeIndex)
 
-def test_get_daily_data(mock_time_series, mock_alpha_vantage_api_key):
-    """Test fetching daily data"""
-    fetcher = DataFetcher()
-    data = fetcher.get_daily_data('AAPL')
-
-    assert isinstance(data, pd.DataFrame)
-    assert len(data) == 2
-    assert all(col in data.columns for col in ['1. open', '2. high', '3. low', '4. close', '5. volume'])
-    assert isinstance(data.index, pd.DatetimeIndex)
-
-def test_get_intraday_data_error_handling(mock_time_series, mock_alpha_vantage_api_key):
+def test_get_intraday_data_error_handling(mock_alpha_vantage_api_key, mock_time_series, mock_database):
     """Test error handling when fetching intraday data fails"""
+    # Setup mock to raise API error
     mock_time_series.return_value.get_intraday.side_effect = Exception("API Error")
 
     fetcher = DataFetcher()
-    with pytest.raises(Exception, match="API Error"):
+    with pytest.raises(DataFetcherError, match="Error fetching data for AAPL: API Error"):
         fetcher.get_intraday_data('AAPL')
+
+def test_get_daily_crypto_data(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test fetching daily cryptocurrency data"""
+    fetcher = DataFetcher()
+    data = fetcher.get_daily_data('BTC', market_type='crypto')
+
+    # Verify the API was called correctly
+    mock_requests.get.assert_called_once_with(
+        'https://www.alphavantage.co/query',
+        params={
+            'function': 'DIGITAL_CURRENCY_DAILY',
+            'symbol': 'BTC',
+            'market': 'USD',
+            'apikey': 'dummy_key'
+        }
+    )
+
+    # Verify data was transformed correctly
+    assert isinstance(data, pd.DataFrame)
+    assert all(col in data.columns for col in ['1. open', '2. high', '3. low', '4. close', '5. volume'])
+    assert len(data) == 2
+    assert isinstance(data.index, pd.DatetimeIndex)
+
+def test_get_daily_crypto_data_invalid_symbol(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test error handling for invalid crypto symbol in daily data"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"Error Message": "Invalid API call"}
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(InvalidSymbolError, match="Invalid symbol: INVALID"):
+        fetcher.get_daily_data('INVALID', market_type='crypto')
+
+    # Verify the API was called correctly
+    mock_requests.get.assert_called_once_with(
+        'https://www.alphavantage.co/query',
+        params={
+            'function': 'DIGITAL_CURRENCY_DAILY',
+            'symbol': 'INVALID',
+            'market': 'USD',
+            'apikey': 'dummy_key'
+        }
+    )
+
+def test_get_daily_crypto_data_rate_limit(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test rate limit handling for daily crypto data"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"Note": "API call frequency exceeded"}
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(APIError, match="API rate limit reached"):
+        fetcher.get_daily_data('BTC', market_type='crypto')
+
+def test_get_daily_crypto_data_api_error(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test handling of API errors in daily crypto data"""
+    mock_response = Mock()
+    mock_response.status_code = 500
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(APIError, match="API request failed with status code 500"):
+        fetcher.get_daily_data('BTC', market_type='crypto')
+
+def test_get_daily_crypto_data_malformed_response(mock_alpha_vantage_api_key, mock_requests, mock_database):
+    """Test handling of malformed API response in daily crypto data"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"unexpected": "format"}
+    mock_requests.get.return_value = mock_response
+
+    fetcher = DataFetcher()
+    with pytest.raises(DataFetcherError, match="Unexpected API response format for BTC"):
+        fetcher.get_daily_data('BTC', market_type='crypto')

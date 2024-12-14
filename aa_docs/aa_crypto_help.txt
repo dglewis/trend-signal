@@ -1,0 +1,130 @@
+Help on class CryptoCurrencies in module alpha_vantage.cryptocurrencies:
+
+class CryptoCurrencies(alpha_vantage.alphavantage.AlphaVantage)
+ |  CryptoCurrencies(key=None, output_format='json', treat_info_as_error=True, indexing_type='date', proxy=None, rapidapi=False)
+ |  
+ |  This class implements all the crypto currencies api calls
+ |  
+ |  Method resolution order:
+ |      CryptoCurrencies
+ |      alpha_vantage.alphavantage.AlphaVantage
+ |      builtins.object
+ |  
+ |  Methods defined here:
+ |  
+ |  get_digital_crypto_rating(self, symbol)
+ |      Returns the Fundamental Crypto Asset Score for a digital currency
+ |      (e.g., BTC), and when it was last updated.
+ |      
+ |      Keyword Arguments:
+ |          symbol: The digital/crypto currency of your choice. It can be any
+ |          of the currencies in the digital currency list. For example:
+ |          symbol=BTC.
+ |  
+ |  get_digital_currency_daily(self, symbol, market)
+ |      Returns  the daily historical time series for a digital currency
+ |      (e.g., BTC) traded on a specific market (e.g., CNY/Chinese Yuan),
+ |      refreshed daily at midnight (UTC). Prices and volumes are quoted in
+ |      both the market-specific currency and USD..
+ |      
+ |      Keyword Arguments:
+ |          symbol: The digital/crypto currency of your choice. It can be any
+ |          of the currencies in the digital currency list. For example:
+ |          symbol=BTC.
+ |          market: The exchange market of your choice. It can be any of the
+ |          market in the market list. For example: market=CNY.
+ |  
+ |  get_digital_currency_exchange_rate(self, from_currency, to_currency)
+ |      Returns the realtime exchange rate for any pair of digital
+ |      currency (e.g., BTC) or physical currency (e.g., USD).
+ |      Keyword Arguments:
+ |          from_currency: The currency you would like to get the exchange rate
+ |          for. It can either be a physical currency or digital/crypto currency.
+ |          For example: from_currency=USD or from_currency=BTC.
+ |          to_currency: The destination currency for the exchange rate.
+ |          It can either be a physical currency or digital/crypto currency.
+ |          For example: to_currency=USD or to_currency=BTC.
+ |  
+ |  get_digital_currency_monthly(self, symbol, market)
+ |      Returns  the monthly historical time series for a digital currency
+ |      (e.g., BTC) traded on a specific market (e.g., CNY/Chinese Yuan),
+ |      refreshed daily at midnight (UTC). Prices and volumes are quoted in
+ |      both the market-specific currency and USD..
+ |      
+ |      Keyword Arguments:
+ |          symbol: The digital/crypto currency of your choice. It can be any
+ |          of the currencies in the digital currency list. For example:
+ |          symbol=BTC.
+ |          market: The exchange market of your choice. It can be any of the
+ |          market in the market list. For example: market=CNY.
+ |  
+ |  get_digital_currency_weekly(self, symbol, market)
+ |      Returns  the weekly historical time series for a digital currency
+ |      (e.g., BTC) traded on a specific market (e.g., CNY/Chinese Yuan),
+ |      refreshed daily at midnight (UTC). Prices and volumes are quoted in
+ |      both the market-specific currency and USD..
+ |      
+ |      Keyword Arguments:
+ |          symbol: The digital/crypto currency of your choice. It can be any
+ |          of the currencies in the digital currency list. For example:
+ |          symbol=BTC.
+ |          market: The exchange market of your choice. It can be any of the
+ |          market in the market list. For example: market=CNY.
+ |  
+ |  ----------------------------------------------------------------------
+ |  Methods inherited from alpha_vantage.alphavantage.AlphaVantage:
+ |  
+ |  __init__(self, key=None, output_format='json', treat_info_as_error=True, indexing_type='date', proxy=None, rapidapi=False)
+ |      Initialize the class
+ |      
+ |      Keyword Arguments:
+ |          key:  Alpha Vantage api key
+ |          retries:  Maximum amount of retries in case of faulty connection or
+ |              server not able to answer the call.
+ |          treat_info_as_error: Treat information from the api as errors
+ |          output_format:  Either 'json', 'pandas' os 'csv'
+ |          indexing_type: Either 'date' to use the default date string given
+ |          by the alpha vantage api call or 'integer' if you just want an
+ |          integer indexing on your dataframe. Only valid, when the
+ |          output_format is 'pandas'
+ |          proxy: Dictionary mapping protocol or protocol and hostname to
+ |          the URL of the proxy.
+ |          rapidapi: Boolean describing whether or not the API key is
+ |          through the RapidAPI platform or not
+ |  
+ |  map_to_matype(self, matype)
+ |      Convert to the alpha vantage math type integer. It returns an
+ |      integer correspondent to the type of math to apply to a function. It
+ |      raises ValueError if an integer greater than the supported math types
+ |      is given.
+ |      
+ |      Keyword Arguments:
+ |          matype:  The math type of the alpha vantage api. It accepts
+ |          integers or a string representing the math type.
+ |      
+ |              * 0 = Simple Moving Average (SMA),
+ |              * 1 = Exponential Moving Average (EMA),
+ |              * 2 = Weighted Moving Average (WMA),
+ |              * 3 = Double Exponential Moving Average (DEMA),
+ |              * 4 = Triple Exponential Moving Average (TEMA),
+ |              * 5 = Triangular Moving Average (TRIMA),
+ |              * 6 = T3 Moving Average,
+ |              * 7 = Kaufman Adaptive Moving Average (KAMA),
+ |              * 8 = MESA Adaptive Moving Average (MAMA)
+ |  
+ |  set_proxy(self, proxy=None)
+ |      Set a new proxy configuration
+ |      
+ |      Keyword Arguments:
+ |          proxy: Dictionary mapping protocol or protocol and hostname to
+ |          the URL of the proxy.
+ |  
+ |  ----------------------------------------------------------------------
+ |  Data descriptors inherited from alpha_vantage.alphavantage.AlphaVantage:
+ |  
+ |  __dict__
+ |      dictionary for instance variables
+ |  
+ |  __weakref__
+ |      list of weak references to the object
+
