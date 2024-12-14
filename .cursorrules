@@ -21,3 +21,5 @@ Create new bug fixes as needed but keep the scope very small and only focus on t
 Each commit should be a single change and should be atomic.
 
 When attempting to fix a bug, try to fix the root cause of the bug and not just the symptom. Gather all the information you need to isolate the root cause of the bug before proceeding to fix it.
+
+You must activate the virtual environment before running commands.

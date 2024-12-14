@@ -9,3 +9,4 @@ ta==0.10.2
 pytest==7.4.3
 schedule==1.2.1
 SQLAlchemy==2.0.23
+plotly==5.18.0

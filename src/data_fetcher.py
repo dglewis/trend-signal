@@ -1,5 +1,11 @@
 from alpha_vantage.timeseries import TimeSeries
 import pandas as pd
+import os
+import sys
+
+# Add the project root to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from config.config import ALPHA_VANTAGE_API_KEY
 import logging
 
