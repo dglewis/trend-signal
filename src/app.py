@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from data_fetcher import DataFetcher
+from data_fetcher import DataFetcher, InvalidSymbolError, APIError, DataFetcherError
 from technical_analysis import TechnicalAnalyzer
 from database import DatabaseManager
 import plotly.graph_objects as go
@@ -17,6 +17,13 @@ def create_candlestick_chart(df):
     fig.update_layout(title='Price Chart', xaxis_title='Date', yaxis_title='Price')
     return fig
 
+def display_error(error_message: str, error_type: str = "error"):
+    """Display an error message with appropriate styling"""
+    if error_type == "warning":
+        st.warning(error_message, icon="⚠️")
+    else:
+        st.error(error_message, icon="🚨")
+
 def main():
     st.title("TrendSignal - Stock Analysis Dashboard")
 
@@ -31,6 +38,11 @@ def main():
 
     if st.sidebar.button("Analyze"):
         try:
+            # Input validation
+            if not symbol:
+                display_error("Please enter a stock symbol")
+                return
+
             # Fetch and analyze data
             fetcher = DataFetcher()
             data = fetcher.get_intraday_data(symbol, interval)
@@ -61,8 +73,20 @@ def main():
             st.subheader("Recent Data")
             st.dataframe(data.tail())
 
+        except InvalidSymbolError as e:
+            display_error(f"Invalid stock symbol: {symbol}. Please enter a valid stock symbol.")
+
+        except APIError as e:
+            if "rate limit" in str(e).lower():
+                display_error("API rate limit reached. Please wait a moment and try again.", "warning")
+            else:
+                display_error(f"API Error: {str(e)}")
+
+        except DataFetcherError as e:
+            display_error(f"Error fetching data: {str(e)}")
+
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            display_error(f"An unexpected error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()
