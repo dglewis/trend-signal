@@ -23,3 +23,12 @@ Each commit should be a single change and should be atomic.
 When attempting to fix a bug, try to fix the root cause of the bug and not just the symptom. Gather all the information you need to isolate the root cause of the bug before proceeding to fix it.
 
 You must activate the virtual environment before running commands.
+
+Look at the [text](ai-deep-stock-analyzer.txt) for an example to draw from for the project when deciding on features to implement.
+
+Test early and often.
+
+
+Follow the [implementation plan](docs/implementation_plan.md) for the project.
+
+Keep the documentation up to date with the code.
