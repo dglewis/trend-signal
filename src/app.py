@@ -8,6 +8,33 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="TrendSignal", page_icon="📈", layout="wide")
 
+# Technical terms tooltips
+TOOLTIPS = {
+    'technical_score': """
+    Overall technical analysis score (0-100) based on multiple indicators:
+    - MACD trend
+    - EMA crossovers
+    - Volume trends
+    - Price momentum
+    """,
+    'macd': """
+    Moving Average Convergence Divergence (MACD):
+    A trend-following momentum indicator that shows the relationship between two moving averages of a security's price.
+    - Positive MACD indicates upward momentum
+    - Negative MACD indicates downward momentum
+    """,
+    'ema_short': """
+    Short-term Exponential Moving Average (EMA):
+    A type of moving average that places greater weight on recent data.
+    The short-term EMA (12 periods) responds more quickly to price changes.
+    """,
+    'ema_long': """
+    Long-term Exponential Moving Average (EMA):
+    A type of moving average that places greater weight on recent data.
+    The long-term EMA (26 periods) shows the longer-term trend direction.
+    """
+}
+
 def create_candlestick_chart(df):
     fig = go.Figure(data=[go.Candlestick(x=df.index,
                 open=df['1. open'],
@@ -54,17 +81,33 @@ def main():
             db = DatabaseManager()
             db.save_analysis(symbol, analysis_results)
 
-            # Display results
+            # Display results with tooltips
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
-                st.metric("Technical Score", f"{analysis_results['score']:.2f}")
+                st.metric(
+                    "Technical Score",
+                    f"{analysis_results['score']:.2f}",
+                    help=TOOLTIPS['technical_score']
+                )
             with col2:
-                st.metric("MACD", f"{analysis_results['macd']:.2f}")
+                st.metric(
+                    "MACD",
+                    f"{analysis_results['macd']:.2f}",
+                    help=TOOLTIPS['macd']
+                )
             with col3:
-                st.metric("Short EMA", f"{analysis_results['ema_short']:.2f}")
+                st.metric(
+                    "Short EMA",
+                    f"{analysis_results['ema_short']:.2f}",
+                    help=TOOLTIPS['ema_short']
+                )
             with col4:
-                st.metric("Long EMA", f"{analysis_results['ema_long']:.2f}")
+                st.metric(
+                    "Long EMA",
+                    f"{analysis_results['ema_long']:.2f}",
+                    help=TOOLTIPS['ema_long']
+                )
 
             # Display chart
             st.plotly_chart(create_candlestick_chart(data), use_container_width=True)
