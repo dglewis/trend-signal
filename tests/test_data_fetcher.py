@@ -1,10 +1,11 @@
 import pytest
 import pandas as pd
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, patch, call, MagicMock
 from src.data_fetcher import DataFetcher, APIError, DataFetcherError, InvalidSymbolError
 from datetime import datetime, timedelta
 import numpy as np
 import json
+import requests
 
 @pytest.fixture
 def mock_alpha_vantage_api_key():
@@ -381,3 +382,81 @@ def test_get_daily_crypto_data_malformed_response(mock_alpha_vantage_api_key, mo
     fetcher = DataFetcher()
     with pytest.raises(DataFetcherError, match="Unexpected API response format for BTC"):
         fetcher.get_daily_data('BTC', market_type='crypto')
+
+def test_get_top_gainers_losers():
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        # Mock response data
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "top_gainers": [
+                {
+                    "ticker": "AAPL",
+                    "price": "150.0",
+                    "change_amount": "10.0",
+                    "change_percentage": "7.14"
+                }
+            ],
+            "top_losers": [
+                {
+                    "ticker": "MSFT",
+                    "price": "300.0",
+                    "change_amount": "-20.0",
+                    "change_percentage": "-6.25"
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        data_fetcher = DataFetcher()
+        gainers, losers = data_fetcher.get_top_gainers_losers()
+
+        # Verify the structure and content of the returned data
+        assert isinstance(gainers, list)
+        assert isinstance(losers, list)
+        assert len(gainers) > 0
+        assert len(losers) > 0
+
+        # Verify the first gainer's data structure
+        first_gainer = gainers[0]
+        assert "ticker" in first_gainer
+        assert "price" in first_gainer
+        assert "change_amount" in first_gainer
+        assert "change_percentage" in first_gainer
+
+        # Verify the first loser's data structure
+        first_loser = losers[0]
+        assert "ticker" in first_loser
+        assert "price" in first_loser
+        assert "change_amount" in first_loser
+        assert "change_percentage" in first_loser
+
+def test_get_top_gainers_losers_api_error():
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        # Mock API error response
+        mock_response = MagicMock()
+        mock_response.status_code = 429  # Too Many Requests
+        mock_get.return_value = mock_response
+
+        data_fetcher = DataFetcher()
+        with pytest.raises(APIError):
+            data_fetcher.get_top_gainers_losers()
+
+def test_get_top_gainers_losers_empty_response():
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        # Mock empty response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "top_gainers": [],
+            "top_losers": []
+        }
+        mock_get.return_value = mock_response
+
+        data_fetcher = DataFetcher()
+        gainers, losers = data_fetcher.get_top_gainers_losers()
+
+        assert isinstance(gainers, list)
+        assert isinstance(losers, list)
+        assert len(gainers) == 0
+        assert len(losers) == 0

@@ -272,3 +272,50 @@ class DataFetcher:
     def close(self):
         """Close the database connection"""
         self.db.close()
+
+    def get_top_gainers_losers(self) -> Tuple[list, list]:
+        """
+        Fetch the top gainers and losers from the market
+
+        Returns:
+            Tuple[list, list]: A tuple containing two lists:
+                - First list contains dictionaries of top gainers
+                - Second list contains dictionaries of top losers
+                Each dictionary contains: ticker, price, change_amount, change_percentage
+
+        Raises:
+            APIError: If there's an error with the API request
+        """
+        try:
+            params = {
+                'function': 'TOP_GAINERS_LOSERS',
+                'apikey': ALPHA_VANTAGE_API_KEY
+            }
+
+            response = requests.get(self.base_url, params=params)
+
+            if response.status_code != 200:
+                if response.status_code == 429:
+                    raise APIError("API rate limit reached. Please try again later.")
+                raise APIError(f"API request failed with status code {response.status_code}")
+
+            data = response.json()
+
+            # Check for API errors
+            if 'Error Message' in data:
+                raise APIError(f"API error: {data['Error Message']}")
+            if 'Note' in data and 'API call frequency' in data['Note']:
+                raise APIError("API rate limit reached. Please try again later.")
+
+            # Extract gainers and losers lists
+            gainers = data.get('top_gainers', [])
+            losers = data.get('top_losers', [])
+
+            return gainers, losers
+
+        except requests.exceptions.RequestException as e:
+            raise APIError(f"Network error while fetching data: {str(e)}")
+        except APIError:
+            raise
+        except Exception as e:
+            raise DataFetcherError(f"Error fetching top gainers/losers: {str(e)}")

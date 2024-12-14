@@ -62,6 +62,47 @@ def main():
     # Initialize DataFetcher for crypto list
     fetcher = DataFetcher()
 
+    # Display top gainers and losers
+    try:
+        gainers, losers = fetcher.get_top_gainers_losers()
+
+        # Create two columns for gainers and losers
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("🔼 Top Gainers")
+            if gainers:
+                gainers_df = pd.DataFrame(gainers)
+                st.dataframe(
+                    gainers_df[['ticker', 'price', 'change_percentage']],
+                    column_config={
+                        'ticker': 'Symbol',
+                        'price': 'Price ($)',
+                        'change_percentage': 'Change (%)'
+                    },
+                    hide_index=True
+                )
+            else:
+                st.info("No gainers data available")
+
+        with col2:
+            st.subheader("🔽 Top Losers")
+            if losers:
+                losers_df = pd.DataFrame(losers)
+                st.dataframe(
+                    losers_df[['ticker', 'price', 'change_percentage']],
+                    column_config={
+                        'ticker': 'Symbol',
+                        'price': 'Price ($)',
+                        'change_percentage': 'Change (%)'
+                    },
+                    hide_index=True
+                )
+            else:
+                st.info("No losers data available")
+    except (APIError, DataFetcherError) as e:
+        display_error(f"Error fetching market movers: {str(e)}", "warning")
+
     # Sidebar
     st.sidebar.header("Settings")
 
