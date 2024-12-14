@@ -19,6 +19,7 @@ TECHNICAL_SETTINGS = {
     'ema_short': 12,
     'ema_long': 26,
     'macd_signal': 9,
+    'rsi_period': 14,  # Standard RSI period
     'score_threshold': 70  # Minimum score to trigger alert
 }
 

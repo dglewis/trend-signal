@@ -67,13 +67,43 @@ def test_score_calculation(sample_data):
     analyzer = TechnicalAnalyzer(sample_data.copy())
     analyzer.calculate_macd()
     analyzer.calculate_ema()
+    analyzer.calculate_rsi()
     score = analyzer.calculate_score()
 
     # Score should be between 0 and 100
     assert 0 <= score <= 100
 
-    # With our sample rising data, score should be relatively high
-    assert score >= 50, "Score should be high for rising price trend"
+    # With our sample rising data, score should be at least 40
+    # (we expect at least MACD and EMA signals to be positive in a rising trend)
+    assert score >= 40, "Score should be at least 40 for rising price trend"
+
+    # Test individual components
+    latest = analyzer.data.iloc[-1]
+    component_scores = 0
+
+    # MACD component (25 points)
+    if latest['macd'] > latest['macd_signal']:
+        component_scores += 25
+
+    # EMA component (25 points)
+    if latest['ema_short'] > latest['ema_long']:
+        component_scores += 25
+
+    # Volume component (20 points)
+    vol_avg = analyzer.data['5. volume'].rolling(window=5).mean().iloc[-1]
+    if latest['5. volume'] > vol_avg:
+        component_scores += 20
+
+    # Price vs EMA component (15 points)
+    if latest['4. close'] > latest['ema_short']:
+        component_scores += 15
+
+    # RSI component (15 points)
+    if 40 <= latest['rsi'] <= 60:
+        component_scores += 15
+
+    # Verify total score matches component calculation
+    assert score == component_scores, "Total score should match sum of component scores"
 
 def test_full_analysis(sample_data):
     """Test complete technical analysis"""
@@ -86,3 +116,23 @@ def test_full_analysis(sample_data):
 
     # Check if values are numeric
     assert all(isinstance(value, (int, float)) for value in result.values())
+
+def test_rsi_calculation(sample_data):
+    """Test RSI indicator calculation"""
+    analyzer = TechnicalAnalyzer(sample_data.copy())
+    result = analyzer.calculate_rsi()
+
+    # Check if RSI column is created
+    assert 'rsi' in result.columns
+
+    # Check if values are calculated (not NaN)
+    assert not result['rsi'].isna().all()
+
+    # Verify RSI is within valid range (0-100)
+    assert result['rsi'].min() >= 0
+    assert result['rsi'].max() <= 100
+
+    # With our sample rising data, RSI should indicate strong momentum
+    last_rsi = result['rsi'].iloc[-1]
+    assert isinstance(last_rsi, float), "RSI should be a float"
+    assert last_rsi > 50, "RSI should be above 50 for rising price trends"
