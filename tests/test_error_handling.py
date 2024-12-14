@@ -14,7 +14,7 @@ def test_invalid_symbol():
             with pytest.raises(InvalidSymbolError) as exc_info:
                 fetcher.get_intraday_data('INVALID1')
 
-            assert "Invalid stock symbol: INVALID1" in str(exc_info.value)
+            assert "Invalid symbol: INVALID1" in str(exc_info.value)
 
 def test_api_rate_limit():
     """Test handling of API rate limit errors"""

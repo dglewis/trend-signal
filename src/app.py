@@ -35,13 +35,13 @@ TOOLTIPS = {
     """
 }
 
-def create_candlestick_chart(df):
+def create_candlestick_chart(df, title="Price Chart"):
     fig = go.Figure(data=[go.Candlestick(x=df.index,
-                open=df['1. open'],
-                high=df['2. high'],
-                low=df['3. low'],
+                open=df['1. open'] if '1. open' in df.columns else df['4. close'],
+                high=df['2. high'] if '2. high' in df.columns else df['4. close'],
+                low=df['3. low'] if '3. low' in df.columns else df['4. close'],
                 close=df['4. close'])])
-    fig.update_layout(title='Price Chart', xaxis_title='Date', yaxis_title='Price')
+    fig.update_layout(title=title, xaxis_title='Date', yaxis_title='Price')
     return fig
 
 def display_error(error_message: str, error_type: str = "error"):
@@ -52,11 +52,33 @@ def display_error(error_message: str, error_type: str = "error"):
         st.error(error_message, icon="🚨")
 
 def main():
-    st.title("TrendSignal - Stock Analysis Dashboard")
+    st.title("TrendSignal - Market Analysis Dashboard")
+
+    # Initialize DataFetcher for crypto list
+    fetcher = DataFetcher()
 
     # Sidebar
     st.sidebar.header("Settings")
-    symbol = st.sidebar.text_input("Enter Stock Symbol", value="AAPL").upper()
+
+    # Market type selection
+    market_type = st.sidebar.radio(
+        "Select Market Type",
+        options=['Stock', 'Cryptocurrency'],
+        index=0,
+        help="Choose between stock market or cryptocurrency analysis"
+    )
+
+    # Symbol input based on market type
+    if market_type == 'Cryptocurrency':
+        crypto_list = fetcher.get_crypto_list()
+        symbol = st.sidebar.selectbox(
+            "Select Cryptocurrency",
+            options=crypto_list,
+            help="Choose from popular cryptocurrencies"
+        )
+    else:
+        symbol = st.sidebar.text_input("Enter Stock Symbol", value="AAPL").upper()
+
     interval = st.sidebar.selectbox(
         "Select Time Interval",
         options=['1min', '5min', '15min', '30min', '60min'],
@@ -67,12 +89,15 @@ def main():
         try:
             # Input validation
             if not symbol:
-                display_error("Please enter a stock symbol")
+                display_error("Please enter a symbol")
                 return
 
             # Fetch and analyze data
-            fetcher = DataFetcher()
-            data = fetcher.get_intraday_data(symbol, interval)
+            data = fetcher.get_intraday_data(
+                symbol=symbol,
+                interval=interval,
+                market_type='crypto' if market_type == 'Cryptocurrency' else 'stock'
+            )
 
             analyzer = TechnicalAnalyzer(data)
             analysis_results = analyzer.analyze()
@@ -109,15 +134,16 @@ def main():
                     help=TOOLTIPS['ema_long']
                 )
 
-            # Display chart
-            st.plotly_chart(create_candlestick_chart(data), use_container_width=True)
+            # Display chart with appropriate title
+            chart_title = f"{symbol} {'Cryptocurrency' if market_type == 'Cryptocurrency' else 'Stock'} Price"
+            st.plotly_chart(create_candlestick_chart(data, title=chart_title), use_container_width=True)
 
             # Display recent data
             st.subheader("Recent Data")
             st.dataframe(data.tail())
 
         except InvalidSymbolError as e:
-            display_error(f"Invalid stock symbol: {symbol}. Please enter a valid stock symbol.")
+            display_error(f"Invalid symbol: {symbol}. Please enter a valid symbol.")
 
         except APIError as e:
             if "rate limit" in str(e).lower():
