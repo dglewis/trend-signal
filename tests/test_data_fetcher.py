@@ -201,6 +201,7 @@ def test_get_crypto_data_api_error(mock_alpha_vantage_api_key, mock_requests, mo
     """Test handling of API errors"""
     mock_response = Mock()
     mock_response.status_code = 500
+    mock_response.json.return_value = {}  # Add empty JSON response
     mock_requests.get.return_value = mock_response
 
     fetcher = DataFetcher()
@@ -301,10 +302,10 @@ def test_get_intraday_data(mock_alpha_vantage_api_key, mock_time_series, mock_da
 def test_get_intraday_data_error_handling(mock_alpha_vantage_api_key, mock_time_series, mock_database):
     """Test error handling when fetching intraday data fails"""
     # Setup mock to raise API error
-    mock_time_series.return_value.get_intraday.side_effect = Exception("API Error")
+    mock_time_series.return_value.get_intraday.side_effect = ValueError("API Error")
 
     fetcher = DataFetcher()
-    with pytest.raises(DataFetcherError, match="Error fetching data for AAPL: API Error"):
+    with pytest.raises(APIError, match="API error: API Error"):
         fetcher.get_intraday_data('AAPL')
 
 def test_get_daily_crypto_data(mock_alpha_vantage_api_key, mock_requests, mock_database):
@@ -460,3 +461,58 @@ def test_get_top_gainers_losers_empty_response():
         assert isinstance(losers, list)
         assert len(gainers) == 0
         assert len(losers) == 0
+
+def test_rate_limit_in_response_body():
+    """Test handling of rate limit message in response body with 200 status code"""
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        # Mock response with rate limit in body but 200 status
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "Note": "Thank you for using Alpha Vantage! Our standard API call frequency is 5 calls per minute and 500 calls per day."
+        }
+        mock_get.return_value = mock_response
+
+        fetcher = DataFetcher()
+        with pytest.raises(APIError, match="API rate limit reached"):
+            fetcher.get_intraday_data('BTC', market_type='crypto')
+
+def test_rate_limit_with_cache_fallback():
+    """Test falling back to cache when rate limited with 200 status"""
+    with patch('src.data_fetcher.requests.get') as mock_get, \
+         patch('src.data_fetcher.DatabaseManager') as mock_db:
+        # Mock response with rate limit
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "Note": "Thank you for using Alpha Vantage! Our standard API call frequency is 5 calls per minute and 500 calls per day."
+        }
+        mock_get.return_value = mock_response
+
+        # Mock cached data
+        mock_db_instance = MagicMock()
+        # First call returns None (initial cache check)
+        # Second call returns data (extended cache check)
+        mock_db_instance.get_cached_data.side_effect = [
+            None,  # First call for normal cache
+            {  # Second call for extended cache
+                '1. open': {'2023-12-01': 100.0},
+                '2. high': {'2023-12-01': 102.0},
+                '3. low': {'2023-12-01': 98.0},
+                '4. close': {'2023-12-01': 101.0},
+                '5. volume': {'2023-12-01': 1000}
+            }
+        ]
+        mock_db.return_value = mock_db_instance
+
+        fetcher = DataFetcher()
+        data = fetcher.get_intraday_data('BTC', market_type='crypto')
+
+        assert isinstance(data, pd.DataFrame)
+        assert not data.empty
+        # Verify both cache calls were made
+        assert mock_db_instance.get_cached_data.call_count == 2
+        assert mock_db_instance.get_cached_data.call_args_list == [
+            call('BTC', max_age_minutes=5),
+            call('BTC', max_age_minutes=15)
+        ]

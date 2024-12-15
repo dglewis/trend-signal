@@ -33,6 +33,9 @@ class DataFetcher:
     def __init__(self):
         if not ALPHA_VANTAGE_API_KEY:
             raise ValueError("Alpha Vantage API key not found in environment variables")
+        if ALPHA_VANTAGE_API_KEY == 'demo':
+            logger.warning("Using demo API key - functionality will be limited")
+        logger.info("Initializing DataFetcher with API key")
         self.ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format='pandas')
         self.crypto = CryptoCurrencies(key=ALPHA_VANTAGE_API_KEY, output_format='pandas')
         self.db = DatabaseManager()
@@ -51,17 +54,20 @@ class DataFetcher:
         Returns:
             pd.DataFrame: DataFrame containing the trading data
         """
-        logger.info(f"Fetching {market_type} data for {symbol}")
+        logger.info(f"Fetching {market_type} data for {symbol} with interval {interval}")
 
         # Check cache first unless force_refresh is True
         if not force_refresh:
+            logger.info("Checking cache...")
             cached_data = self.db.get_cached_data(symbol, max_age_minutes=5)
             if cached_data is not None:
                 logger.info(f"Using cached data for {symbol}")
                 return pd.DataFrame.from_dict(cached_data)
+            logger.info("No valid cache found")
 
         try:
             if market_type == 'crypto':
+                logger.info("Using crypto API endpoint")
                 # For crypto, we use the daily endpoint since intraday is premium-only
                 params = {
                     'function': 'DIGITAL_CURRENCY_DAILY',
@@ -69,26 +75,43 @@ class DataFetcher:
                     'market': 'USD',
                     'apikey': ALPHA_VANTAGE_API_KEY
                 }
+                logger.info(f"Making API request to {self.base_url}")
                 response = requests.get(self.base_url, params=params)
+                logger.info(f"API response status code: {response.status_code}")
+
+                data = response.json()
+                logger.debug(f"API response keys: {data.keys()}")
+                logger.debug(f"API response content: {data}")  # Log full response for debugging
+
+                # Check for rate limit first
+                if 'Note' in data:
+                    logger.warning(f"API Note present: {data['Note']}")
+                    if 'API call frequency' in data['Note']:
+                        logger.warning("API rate limit hit, checking older cache")
+                        cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
+                        if cached_data is not None:
+                            logger.info("Using older cached data due to rate limit")
+                            return pd.DataFrame.from_dict(cached_data)
+                        raise APIError("API rate limit reached. Please wait a moment and try again.")
+
+                # Then check for other error conditions
                 if response.status_code != 200:
                     raise APIError(f"API request failed with status code {response.status_code}")
 
-                data = response.json()
+                if 'Error Message' in data:
+                    logger.error(f"API Error Message: {data['Error Message']}")
+                    if "Invalid API call" in data['Error Message']:
+                        raise InvalidSymbolError(f"Invalid symbol: {symbol}")
+                    raise APIError(f"API error: {data['Error Message']}")
 
-                # Check for various error conditions in the response
-                if 'Error Message' in data or ('Information' in data and 'Invalid API call' in data['Information']):
+                if 'Information' in data and 'Invalid API call' in data['Information']:
+                    logger.error(f"Invalid symbol error for {symbol}")
                     raise InvalidSymbolError(f"Invalid symbol: {symbol}")
-                if 'Note' in data and 'API call frequency' in data['Note']:
-                    # If we hit rate limit, try to use slightly older cached data
-                    cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
-                    if cached_data is not None:
-                        logger.warning("Using older cached data due to rate limit")
-                        return pd.DataFrame.from_dict(cached_data)
-                    raise APIError("API rate limit reached. Please try again later.")
 
-                # Convert the JSON response to a DataFrame
+                # Process the data
                 time_series_key = "Time Series (Digital Currency Daily)"
                 if time_series_key not in data:
+                    logger.error(f"Unexpected API response format. Keys: {data.keys()}")
                     if 'Information' in data:
                         raise InvalidSymbolError(f"Invalid symbol: {symbol}")
                     raise DataFetcherError(f"Unexpected API response format for {symbol}")
@@ -116,56 +139,74 @@ class DataFetcher:
 
                     # Only keep the most recent data points to match intraday-like behavior
                     df = df.head(100)  # Keep last 100 data points
+
+                    # Store in cache
+                    self.db.save_analysis(
+                        symbol=symbol,
+                        analysis_data={
+                            'score': 0.0,  # Placeholder until analysis is done
+                            'macd': 0.0,
+                            'macd_signal': 0.0,
+                            'ema_short': 0.0,
+                            'ema_long': 0.0
+                        },
+                        raw_data=df.to_dict()
+                    )
+
+                    return df
+
                 except (KeyError, ValueError) as e:
+                    logger.error(f"Error processing data for {symbol}: {str(e)}")
                     raise DataFetcherError(f"Error processing data for {symbol}: {str(e)}")
             else:
-                df, _ = self.ts.get_intraday(
-                    symbol=symbol,
-                    interval=interval,
-                    outputsize='compact'
-                )
+                # Stock market data
+                logger.info("Using stock API endpoint")
+                try:
+                    df, _ = self.ts.get_intraday(
+                        symbol=symbol,
+                        interval=interval,
+                        outputsize='compact'
+                    )
 
-                # Check for None or empty DataFrame before proceeding
-                if df is None or df.empty:
-                    raise DataFetcherError(f"No data returned for symbol: {symbol}")
+                    if df is None or df.empty:
+                        raise DataFetcherError(f"No data returned for symbol: {symbol}")
 
-            # Store in cache
-            self.db.save_analysis(
-                symbol=symbol,
-                analysis_data={
-                    'score': 0.0,  # Placeholder until analysis is done
-                    'macd': 0.0,
-                    'macd_signal': 0.0,
-                    'ema_short': 0.0,
-                    'ema_long': 0.0
-                },
-                raw_data=df.to_dict()
-            )
+                    # Store in cache
+                    self.db.save_analysis(
+                        symbol=symbol,
+                        analysis_data={
+                            'score': 0.0,
+                            'macd': 0.0,
+                            'macd_signal': 0.0,
+                            'ema_short': 0.0,
+                            'ema_long': 0.0
+                        },
+                        raw_data=df.to_dict()
+                    )
 
-            return df
+                    return df
 
-        except ValueError as e:
-            if "Invalid API call" in str(e):
-                raise InvalidSymbolError(f"Invalid symbol: {symbol}")
-            elif "API rate limit" in str(e):
-                # If we hit rate limit, try to use slightly older cached data
-                cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
-                if cached_data is not None:
-                    logger.warning("Using older cached data due to rate limit")
-                    return pd.DataFrame.from_dict(cached_data)
-                raise APIError("API rate limit reached. Please try again later.")
-            raise APIError(f"API error: {str(e)}")
-
-        except ConnectionError as e:
-            raise APIError(f"Network error while fetching data: {str(e)}")
-
-        except (InvalidSymbolError, APIError) as e:
-            # Re-raise these exceptions without wrapping
-            raise
+                except ValueError as e:
+                    if "Invalid API call" in str(e):
+                        raise InvalidSymbolError(f"Invalid symbol: {symbol}")
+                    elif "API rate limit" in str(e):
+                        logger.warning("API rate limit hit in stock endpoint")
+                        cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
+                        if cached_data is not None:
+                            logger.info("Using older cached data due to rate limit")
+                            return pd.DataFrame.from_dict(cached_data)
+                        raise APIError("API rate limit reached. Please wait a moment and try again.")
+                    raise APIError(f"API error: {str(e)}")
+                except ConnectionError as e:
+                    logger.error(f"Network error while fetching data: {str(e)}")
+                    raise APIError(f"Network error while fetching data: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Unexpected error in stock endpoint: {str(e)}")
+                    raise APIError(f"API error: {str(e)}")
 
         except Exception as e:
-            logger.error(f"Error fetching data for {symbol}: {str(e)}")
-            raise DataFetcherError(f"Error fetching data for {symbol}: {str(e)}")
+            logger.error(f"Error in get_intraday_data: {str(e)}", exc_info=True)
+            raise
 
     def get_daily_data(self, symbol: str, market_type: str = 'stock') -> pd.DataFrame:
         """
