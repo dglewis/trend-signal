@@ -12,7 +12,7 @@ def test_invalid_symbol():
 
             fetcher = DataFetcher()
             with pytest.raises(InvalidSymbolError) as exc_info:
-                fetcher.get_intraday_data('INVALID1')
+                fetcher.get_intraday_data('INVALID1', force_refresh=True)
 
             assert "Invalid symbol: INVALID1" in str(exc_info.value)
 
@@ -25,7 +25,7 @@ def test_api_rate_limit():
 
             fetcher = DataFetcher()
             with pytest.raises(APIError) as exc_info:
-                fetcher.get_intraday_data('AAPL')
+                fetcher.get_intraday_data('AAPL', force_refresh=True)
 
             assert "API rate limit" in str(exc_info.value)
 
@@ -38,7 +38,7 @@ def test_network_error():
 
             fetcher = DataFetcher()
             with pytest.raises(APIError) as exc_info:
-                fetcher.get_intraday_data('AAPL')
+                fetcher.get_intraday_data('AAPL', force_refresh=True)
 
             assert "Network error" in str(exc_info.value)
 
@@ -51,6 +51,6 @@ def test_malformed_response():
 
             fetcher = DataFetcher()
             with pytest.raises(DataFetcherError) as exc_info:
-                fetcher.get_intraday_data('AAPL')
+                fetcher.get_intraday_data('AAPL', force_refresh=True)
 
             assert "No data returned for symbol" in str(exc_info.value)

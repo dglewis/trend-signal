@@ -1,4 +1,5 @@
 import requests
+from requests.exceptions import RequestException
 from alpha_vantage.timeseries import TimeSeries
 from alpha_vantage.cryptocurrencies import CryptoCurrencies
 import pandas as pd
@@ -14,8 +15,22 @@ from config.config import ALPHA_VANTAGE_API_KEY
 from src.database import DatabaseManager
 import logging
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Global logger instance
+logger = None
+
+def setup_logger():
+    """Set up and configure the logger"""
+    global logger
+    logger = logging.getLogger('data_fetcher')
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+# Set up logging with a handler
+setup_logger()
 
 class DataFetcherError(Exception):
     """Base exception class for DataFetcher errors"""
@@ -40,20 +55,29 @@ class DataFetcher:
         self.crypto = CryptoCurrencies(key=ALPHA_VANTAGE_API_KEY, output_format='pandas')
         self.db = DatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
+        # Ensure logger is set up
+        setup_logger()
+
+    def _create_dataframe_from_cache(self, cached_data: Dict) -> Optional[pd.DataFrame]:
+        """Create a DataFrame from cached data with proper datetime index"""
+        try:
+            # Convert string timestamps to datetime objects
+            processed_data = {}
+            for col, values in cached_data.items():
+                processed_data[col] = {
+                    pd.to_datetime(k): v for k, v in values.items()
+                }
+
+            df = pd.DataFrame.from_dict(processed_data)
+            if not df.empty:
+                df.index = pd.to_datetime(df.index)
+                return df
+        except Exception as e:
+            logger.error(f"Error processing cached data: {str(e)}")
+        return None
 
     def get_intraday_data(self, symbol: str, interval: str = '5min', market_type: str = 'stock', force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Get intraday trading data for a symbol
-
-        Args:
-            symbol: The stock/crypto symbol
-            interval: Time interval between data points
-            market_type: Either 'stock' or 'crypto'
-            force_refresh: If True, bypass cache and fetch fresh data
-
-        Returns:
-            pd.DataFrame: DataFrame containing the trading data
-        """
+        """Get intraday trading data for a symbol"""
         logger.info(f"Fetching {market_type} data for {symbol} with interval {interval}")
 
         # Check cache first unless force_refresh is True
@@ -61,103 +85,105 @@ class DataFetcher:
             logger.info("Checking cache...")
             cached_data = self.db.get_cached_data(symbol, max_age_minutes=5)
             if cached_data is not None:
-                logger.info(f"Using cached data for {symbol}")
-                return pd.DataFrame.from_dict(cached_data)
+                df = self._create_dataframe_from_cache(cached_data)
+                if df is not None:
+                    logger.info(f"Using cached data for {symbol}")
+                    return df
             logger.info("No valid cache found")
 
         try:
             if market_type == 'crypto':
                 logger.info("Using crypto API endpoint")
-                # For crypto, we use the daily endpoint since intraday is premium-only
                 params = {
                     'function': 'DIGITAL_CURRENCY_DAILY',
-                    'symbol': symbol,
+                    'symbol': symbol.upper(),
                     'market': 'USD',
                     'apikey': ALPHA_VANTAGE_API_KEY
                 }
-                logger.info(f"Making API request to {self.base_url}")
-                response = requests.get(self.base_url, params=params)
-                logger.info(f"API response status code: {response.status_code}")
-
-                data = response.json()
-                logger.debug(f"API response keys: {data.keys()}")
-                logger.debug(f"API response content: {data}")  # Log full response for debugging
-
-                # Check for rate limit first
-                if 'Note' in data:
-                    logger.warning(f"API Note present: {data['Note']}")
-                    if 'API call frequency' in data['Note']:
-                        logger.warning("API rate limit hit, checking older cache")
-                        cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
-                        if cached_data is not None:
-                            logger.info("Using older cached data due to rate limit")
-                            return pd.DataFrame.from_dict(cached_data)
-                        raise APIError("API rate limit reached. Please wait a moment and try again.")
-
-                # Then check for other error conditions
-                if response.status_code != 200:
-                    raise APIError(f"API request failed with status code {response.status_code}")
-
-                if 'Error Message' in data:
-                    logger.error(f"API Error Message: {data['Error Message']}")
-                    if "Invalid API call" in data['Error Message']:
-                        raise InvalidSymbolError(f"Invalid symbol: {symbol}")
-                    raise APIError(f"API error: {data['Error Message']}")
-
-                if 'Information' in data and 'Invalid API call' in data['Information']:
-                    logger.error(f"Invalid symbol error for {symbol}")
-                    raise InvalidSymbolError(f"Invalid symbol: {symbol}")
-
-                # Process the data
-                time_series_key = "Time Series (Digital Currency Daily)"
-                if time_series_key not in data:
-                    logger.error(f"Unexpected API response format. Keys: {data.keys()}")
-                    if 'Information' in data:
-                        raise InvalidSymbolError(f"Invalid symbol: {symbol}")
-                    raise DataFetcherError(f"Unexpected API response format for {symbol}")
 
                 try:
-                    df = pd.DataFrame.from_dict(data[time_series_key], orient='index')
-                    df.index = pd.to_datetime(df.index)
-                    df = df.astype(float)
+                    response = requests.get(self.base_url, params=params)
+                    logger.info(f"API response status code: {response.status_code}")
 
-                    # Rename columns to match stock data format
-                    df = df.rename(columns={
-                        '1a. open (USD)': '1. open',
-                        '2a. high (USD)': '2. high',
-                        '3a. low (USD)': '3. low',
-                        '4a. close (USD)': '4. close',
-                        '5. volume': '5. volume'
-                    })
+                    # Check status code first
+                    if response.status_code != 200:
+                        raise APIError(f"API request failed with status code {response.status_code}")
 
-                    # Select only the columns we need
-                    df = df[['1. open', '2. high', '3. low', '4. close', '5. volume']]
-                    df = df.astype(float)
+                    data = response.json()
+                    logger.debug(f"API response content: {data}")
 
-                    # Sort by date descending to get most recent first
-                    df = df.sort_index(ascending=False)
+                    # Check for rate limit first
+                    if 'Note' in data and ('API call frequency' in data['Note'] or 'standard API' in data['Note']):
+                        logger.warning("API rate limit hit, checking older cache")
+                        if not force_refresh:
+                            cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
+                            if cached_data is not None:
+                                df = self._create_dataframe_from_cache(cached_data)
+                                if df is not None:
+                                    logger.info("Using older cached data due to rate limit")
+                                    return df
+                        raise APIError("API rate limit reached. Please try again later.")
 
-                    # Only keep the most recent data points to match intraday-like behavior
-                    df = df.head(100)  # Keep last 100 data points
+                    # Check for error messages
+                    if 'Error Message' in data:
+                        raise InvalidSymbolError(f"Invalid symbol: {symbol}")
+                    if 'Information' in data:
+                        raise DataFetcherError(f"Unexpected API response format for {symbol}")
 
-                    # Store in cache
-                    self.db.save_analysis(
-                        symbol=symbol,
-                        analysis_data={
-                            'score': 0.0,  # Placeholder until analysis is done
-                            'macd': 0.0,
-                            'macd_signal': 0.0,
-                            'ema_short': 0.0,
-                            'ema_long': 0.0
-                        },
-                        raw_data=df.to_dict()
-                    )
+                    # Process the data
+                    time_series_key = "Time Series (Digital Currency Daily)"
+                    if time_series_key not in data:
+                        raise DataFetcherError(f"Unexpected API response format for {symbol}")
 
-                    return df
+                    try:
+                        df = pd.DataFrame.from_dict(data[time_series_key], orient='index')
+                        df.index = pd.to_datetime(df.index)
 
-                except (KeyError, ValueError) as e:
-                    logger.error(f"Error processing data for {symbol}: {str(e)}")
-                    raise DataFetcherError(f"Error processing data for {symbol}: {str(e)}")
+                        # Validate and rename columns
+                        required_columns = {
+                            '1a. open (USD)': '1. open',
+                            '2a. high (USD)': '2. high',
+                            '3a. low (USD)': '3. low',
+                            '4a. close (USD)': '4. close',
+                            '5. volume': '5. volume'
+                        }
+
+                        # Check if all required columns exist
+                        missing_columns = [col for col in required_columns.keys() if col not in df.columns]
+                        if missing_columns:
+                            raise DataFetcherError(f"Missing required columns for {symbol}: {missing_columns}")
+
+                        # Rename columns
+                        df = df.rename(columns=required_columns)
+                        df = df[list(required_columns.values())]
+                        df = df.astype(float)
+                        df = df.sort_index(ascending=False)
+                        df = df.head(100)
+
+                        # Cache the data
+                        if not force_refresh:
+                            self.db.save_analysis(
+                                symbol=symbol,
+                                analysis_data={
+                                    'score': 0.0,
+                                    'macd': 0.0,
+                                    'macd_signal': 0.0,
+                                    'ema_short': 0.0,
+                                    'ema_long': 0.0
+                                },
+                                raw_data=df.to_dict()
+                            )
+
+                        return df
+
+                    except Exception as e:
+                        logger.error(f"Error processing data for {symbol}: {str(e)}")
+                        raise DataFetcherError(f"Error processing data for {symbol}: {str(e)}")
+
+                except RequestException as e:
+                    logger.error(f"Network error while fetching data: {str(e)}")
+                    raise APIError(f"Network error while fetching data: {str(e)}")
+
             else:
                 # Stock market data
                 logger.info("Using stock API endpoint")
@@ -172,17 +198,18 @@ class DataFetcher:
                         raise DataFetcherError(f"No data returned for symbol: {symbol}")
 
                     # Store in cache
-                    self.db.save_analysis(
-                        symbol=symbol,
-                        analysis_data={
-                            'score': 0.0,
-                            'macd': 0.0,
-                            'macd_signal': 0.0,
-                            'ema_short': 0.0,
-                            'ema_long': 0.0
-                        },
-                        raw_data=df.to_dict()
-                    )
+                    if not force_refresh:
+                        self.db.save_analysis(
+                            symbol=symbol,
+                            analysis_data={
+                                'score': 0.0,
+                                'macd': 0.0,
+                                'macd_signal': 0.0,
+                                'ema_short': 0.0,
+                                'ema_long': 0.0
+                            },
+                            raw_data=df.to_dict()
+                        )
 
                     return df
 
@@ -191,11 +218,14 @@ class DataFetcher:
                         raise InvalidSymbolError(f"Invalid symbol: {symbol}")
                     elif "API rate limit" in str(e):
                         logger.warning("API rate limit hit in stock endpoint")
-                        cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
-                        if cached_data is not None:
-                            logger.info("Using older cached data due to rate limit")
-                            return pd.DataFrame.from_dict(cached_data)
-                        raise APIError("API rate limit reached. Please wait a moment and try again.")
+                        if not force_refresh:
+                            cached_data = self.db.get_cached_data(symbol, max_age_minutes=15)
+                            if cached_data is not None:
+                                df = self._create_dataframe_from_cache(cached_data)
+                                if df is not None:
+                                    logger.info("Using older cached data due to rate limit")
+                                    return df
+                        raise APIError("API rate limit reached. Please try again later.")
                     raise APIError(f"API error: {str(e)}")
                 except ConnectionError as e:
                     logger.error(f"Network error while fetching data: {str(e)}")

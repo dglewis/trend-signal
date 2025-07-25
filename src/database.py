@@ -3,9 +3,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 from config.config import DATABASE_URL, BASE_DIR
-from typing import Optional
+from typing import Optional, Dict
 import os
 import logging
+import pandas as pd
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +52,13 @@ class DatabaseManager:
             # Convert raw_data to string safely
             if raw_data is not None:
                 try:
-                    data_str = str(raw_data)
+                    # Convert any Timestamp objects to strings
+                    processed_data = {}
+                    for col, values in raw_data.items():
+                        processed_data[col] = {
+                            str(k): v for k, v in values.items()
+                        }
+                    data_str = str(processed_data)
                     if len(data_str) > 1000000:  # Basic size check
                         logger.warning(f"Large raw_data for {symbol} ({len(data_str)} chars)")
                 except Exception as e:
@@ -88,46 +95,44 @@ class DatabaseManager:
             logger.error(f"Error getting latest analysis for {symbol}: {str(e)}")
             return None
 
-    def get_cached_data(self, symbol: str, max_age_minutes: int = 5) -> Optional[dict]:
-        """
-        Get cached data for a symbol if it exists and is not older than max_age_minutes
-
-        Args:
-            symbol: The stock/crypto symbol
-            max_age_minutes: Maximum age of cached data in minutes
-
-        Returns:
-            dict: The cached data if available and fresh, None otherwise
-        """
+    def get_cached_data(self, symbol: str, max_age_minutes: int = 5) -> Optional[Dict]:
+        """Get cached data for a symbol if it exists and is not too old"""
         try:
-            cutoff_time = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+            cutoff_time = datetime.now() - timedelta(minutes=max_age_minutes)
             logger.info(f"Looking for cache for {symbol} newer than {cutoff_time}")
 
             latest = self.session.query(StockAnalysis)\
-                .filter_by(symbol=symbol)\
-                .filter(StockAnalysis.timestamp >= cutoff_time)\
+                .filter(StockAnalysis.symbol == symbol)\
+                .filter(StockAnalysis.timestamp > cutoff_time)\
                 .order_by(StockAnalysis.timestamp.desc())\
                 .first()
 
-            if latest:
+            if latest and latest.data_json:
                 logger.info(f"Found cache entry for {symbol} from {latest.timestamp}")
-                if latest.data_json:
-                    try:
-                        data = eval(latest.data_json)  # Convert string back to dict
-                        if not isinstance(data, dict):
-                            logger.error(f"Cached data for {symbol} is not a dictionary")
-                            return None
-                        return data
-                    except Exception as e:
-                        logger.error(f"Error parsing cached data for {symbol}: {str(e)}", exc_info=True)
+                try:
+                    # Convert string representation to dict safely
+                    data_dict = eval(latest.data_json)
+                    if not isinstance(data_dict, dict):
+                        logger.error(f"Cached data for {symbol} is not a dictionary")
                         return None
-                else:
-                    logger.info(f"No raw data in cache for {symbol}")
-            else:
-                logger.info(f"No recent cache entry found for {symbol}")
+
+                    # Ensure all values are dictionaries
+                    for col in data_dict:
+                        if not isinstance(data_dict[col], dict):
+                            logger.error(f"Column {col} data is not a dictionary")
+                            return None
+
+                    return data_dict
+
+                except Exception as e:
+                    logger.error(f"Error parsing cached data for {symbol}: {str(e)}")
+                    return None
+
+            logger.info(f"No recent cache entry found for {symbol}")
             return None
+
         except Exception as e:
-            logger.error(f"Error getting cached data for {symbol}: {str(e)}", exc_info=True)
+            logger.error(f"Error retrieving cache for {symbol}: {str(e)}")
             return None
 
     def close(self):

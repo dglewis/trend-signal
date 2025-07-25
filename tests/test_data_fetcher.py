@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import json
 import requests
+import logging
 
 @pytest.fixture
 def mock_alpha_vantage_api_key():
@@ -475,7 +476,7 @@ def test_rate_limit_in_response_body():
 
         fetcher = DataFetcher()
         with pytest.raises(APIError, match="API rate limit reached"):
-            fetcher.get_intraday_data('BTC', market_type='crypto')
+            fetcher.get_intraday_data('BTC', market_type='crypto', force_refresh=True)
 
 def test_rate_limit_with_cache_fallback():
     """Test falling back to cache when rate limited with 200 status"""
@@ -516,3 +517,213 @@ def test_rate_limit_with_cache_fallback():
             call('BTC', max_age_minutes=5),
             call('BTC', max_age_minutes=15)
         ]
+
+def test_get_crypto_data_format():
+    """Test handling of crypto data format"""
+    with patch('src.data_fetcher.ALPHA_VANTAGE_API_KEY', 'dummy_key'), \
+         patch('src.data_fetcher.requests.get') as mock_get, \
+         patch('src.data_fetcher.DatabaseManager') as mock_db:
+
+        # Mock response with actual crypto format
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "Meta Data": {
+                "1. Information": "Daily Prices and Volumes for Digital Currency",
+                "2. Digital Currency Code": "BTC",
+                "3. Digital Currency Name": "Bitcoin",
+                "4. Market Code": "USD",
+                "5. Market Name": "United States Dollar",
+                "6. Last Refreshed": "2023-12-01 00:00:00",
+                "7. Time Zone": "UTC"
+            },
+            "Time Series (Digital Currency Daily)": {
+                "2023-12-01": {
+                    "1a. open (USD)": "50000.00000",
+                    "1b. open (USD)": "50000.00000",
+                    "2a. high (USD)": "50100.00000",
+                    "2b. high (USD)": "50100.00000",
+                    "3a. low (USD)": "49900.00000",
+                    "3b. low (USD)": "49900.00000",
+                    "4a. close (USD)": "50050.00000",
+                    "4b. close (USD)": "50050.00000",
+                    "5. volume": "100.00000",
+                    "6. market cap (USD)": "5005000.00000"
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        # Mock database
+        mock_db_instance = MagicMock()
+        mock_db_instance.get_cached_data.return_value = None
+        mock_db.return_value = mock_db_instance
+
+        fetcher = DataFetcher()
+        data = fetcher.get_intraday_data('BTC', market_type='crypto')
+
+        # Verify the data format
+        assert isinstance(data, pd.DataFrame)
+        assert not data.empty
+        assert all(col in data.columns for col in ['1. open', '2. high', '3. low', '4. close', '5. volume'])
+        assert len(data) == 1  # We only provided one day of data
+        assert isinstance(data.index, pd.DatetimeIndex)
+        assert data['1. open'].iloc[0] == 50000.0  # Check actual value conversion
+
+def test_get_crypto_data_missing_metadata():
+    """Test handling of crypto data with missing metadata"""
+    with patch('src.data_fetcher.ALPHA_VANTAGE_API_KEY', 'dummy_key'), \
+         patch('src.data_fetcher.requests.get') as mock_get, \
+         patch('src.data_fetcher.DatabaseManager') as mock_db:
+
+        # Mock response with missing metadata but correct data format
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "Time Series (Digital Currency Daily)": {
+                "2023-12-01": {
+                    "1a. open (USD)": "50000.00000",
+                    "1b. open (USD)": "50000.00000",
+                    "2a. high (USD)": "50100.00000",
+                    "2b. high (USD)": "50100.00000",
+                    "3a. low (USD)": "49900.00000",
+                    "3b. low (USD)": "49900.00000",
+                    "4a. close (USD)": "50050.00000",
+                    "4b. close (USD)": "50050.00000",
+                    "5. volume": "100.00000",
+                    "6. market cap (USD)": "5005000.00000"
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        # Mock database
+        mock_db_instance = MagicMock()
+        mock_db_instance.get_cached_data.return_value = None
+        mock_db.return_value = mock_db_instance
+
+        fetcher = DataFetcher()
+        # This should work now since we don't require metadata
+        data = fetcher.get_intraday_data('BTC', market_type='crypto')
+
+        # Verify the data is processed correctly
+        assert isinstance(data, pd.DataFrame)
+        assert not data.empty
+        assert all(col in data.columns for col in ['1. open', '2. high', '3. low', '4. close', '5. volume'])
+        assert len(data) == 1  # We only provided one day of data
+        assert isinstance(data.index, pd.DatetimeIndex)
+        assert data['1. open'].iloc[0] == 50000.0  # Check actual value conversion
+
+def test_cache_timestamp_parsing():
+    """Test handling of Timestamp objects in cache data"""
+    with patch('src.data_fetcher.DatabaseManager') as mock_db:
+        mock_db_instance = MagicMock()
+        # Simulate cache with Timestamp objects
+        mock_db_instance.get_cached_data.return_value = {
+            '1. open': {'2023-12-01 00:00:00': 100.0},
+            '2. high': {'2023-12-01 00:00:00': 102.0},
+            '3. low': {'2023-12-01 00:00:00': 98.0},
+            '4. close': {'2023-12-01 00:00:00': 101.0},
+            '5. volume': {'2023-12-01 00:00:00': 1000}
+        }
+        mock_db.return_value = mock_db_instance
+
+        fetcher = DataFetcher()
+        data = fetcher.get_intraday_data('AAPL', force_refresh=False)
+
+        assert isinstance(data, pd.DataFrame)
+        assert not data.empty
+        assert isinstance(data.index, pd.DatetimeIndex)
+
+def test_logger_initialization():
+    """Test logger initialization in DataFetcher"""
+    # Reset logger to ensure clean test
+    logger = logging.getLogger('data_fetcher')
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    logger.setLevel(logging.NOTSET)
+
+    # Create new DataFetcher instance which should set up logger
+    fetcher = DataFetcher()
+
+    # Get logger and verify it's configured correctly
+    logger = logging.getLogger('data_fetcher')
+    assert logger.handlers, "Logger should have handlers"
+    assert len(logger.handlers) == 1, "Logger should have exactly one handler"
+    assert isinstance(logger.handlers[0], logging.StreamHandler), "Logger should have a StreamHandler"
+    assert logger.level == logging.INFO, "Logger should be set to INFO level"
+
+def test_api_rate_limit_with_no_cache():
+    """Test handling of API rate limit when no cache is available"""
+    with patch('src.data_fetcher.TimeSeries') as mock_ts, \
+         patch('src.data_fetcher.DatabaseManager') as mock_db:
+
+        # Mock rate limit response
+        mock_ts_instance = MagicMock()
+        mock_ts_instance.get_intraday.side_effect = ValueError(
+            "Thank you for using Alpha Vantage! Our standard API rate limit is 25 requests per day."
+        )
+        mock_ts.return_value = mock_ts_instance
+
+        # Mock empty cache
+        mock_db_instance = MagicMock()
+        mock_db_instance.get_cached_data.return_value = None
+        mock_db.return_value = mock_db_instance
+
+        fetcher = DataFetcher()
+        with pytest.raises(APIError, match="API rate limit reached"):
+            fetcher.get_intraday_data('AAPL')
+
+        # Verify both cache attempts were made
+        assert mock_db_instance.get_cached_data.call_count == 2
+        assert mock_db_instance.get_cached_data.call_args_list == [
+            call('AAPL', max_age_minutes=5),
+            call('AAPL', max_age_minutes=15)
+        ]
+
+def test_crypto_invalid_response():
+    """Test handling of invalid crypto API response"""
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'Information': 'Invalid API call'
+        }
+        mock_get.return_value = mock_response
+
+        fetcher = DataFetcher()
+        with pytest.raises(DataFetcherError, match="Unexpected API response format for BTC"):
+            fetcher.get_intraday_data('BTC', market_type='crypto', force_refresh=True)
+
+def test_crypto_rate_limit_response():
+    """Test handling of rate limit response in crypto API"""
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'Note': 'Thank you for using Alpha Vantage! Our standard API rate limit is 25 requests per day.'
+        }
+        mock_get.return_value = mock_response
+
+        fetcher = DataFetcher()
+        with pytest.raises(APIError, match="API rate limit reached"):
+            fetcher.get_intraday_data('BTC', market_type='crypto', force_refresh=True)
+
+def test_crypto_malformed_data():
+    """Test handling of malformed data in crypto API response"""
+    with patch('src.data_fetcher.requests.get') as mock_get:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'Time Series (Digital Currency Daily)': {
+                '2023-12-01': {
+                    # Missing required fields
+                    '1a. open (USD)': '50000.00000'
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        fetcher = DataFetcher()
+        with pytest.raises(DataFetcherError, match="Missing required columns for BTC"):
+            fetcher.get_intraday_data('BTC', market_type='crypto', force_refresh=True)

@@ -1,11 +1,15 @@
 import streamlit as st
 import pandas as pd
-from data_fetcher import DataFetcher, InvalidSymbolError, APIError, DataFetcherError
-from technical_analysis import TechnicalAnalyzer
-from database import DatabaseManager
+from src.data_fetcher import DataFetcher, InvalidSymbolError, APIError, DataFetcherError
+from src.technical_analysis import TechnicalAnalyzer
+from src.database import DatabaseManager
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="TrendSignal", page_icon="📈", layout="wide")
 
@@ -59,6 +63,47 @@ def display_error(message: str, level: str = "error"):
     else:
         st.info(f"ℹ️ {message}")
 
+def analyze_symbol(symbol: str, interval: str, market_type: str, force_refresh: bool = False):
+    """Analyze the selected symbol and display results"""
+    try:
+        fetcher = DataFetcher()
+
+        if not symbol:
+            st.warning("Please enter a symbol")
+            return
+
+        try:
+            data = fetcher.get_intraday_data(
+                symbol=symbol,
+                interval=interval,
+                market_type=market_type.lower(),
+                force_refresh=force_refresh
+            )
+
+            if data is None or data.empty:
+                st.error(f"No data available for {symbol}")
+                return
+
+            # Perform technical analysis
+            analyzer = TechnicalAnalyzer(data)
+            analysis_results = analyzer.analyze()
+
+            # Return both data and analysis results
+            return data, analysis_results
+
+        except InvalidSymbolError as e:
+            st.error(str(e))
+        except APIError as e:
+            st.error(f"API Error: {str(e)}")
+        except DataFetcherError as e:
+            st.error(f"Data Error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error in analyze_symbol: {str(e)}", exc_info=True)
+            st.error(f"An unexpected error occurred: {str(e)}")
+    finally:
+        if 'fetcher' in locals():
+            fetcher.close()
+
 def main():
     st.title("TrendSignal - Market Analysis Dashboard")
 
@@ -105,88 +150,23 @@ def main():
         help="If checked, bypass cache and fetch fresh data from API"
     )
 
-    # Function to perform analysis
-    def analyze_symbol():
-        try:
-            # Input validation
-            if not symbol:
-                display_error("Please enter a symbol")
-                return None
-
-            # Fetch and analyze data
-            data = fetcher.get_intraday_data(
-                symbol=symbol,
-                interval=interval,
-                market_type='crypto' if market_type == 'Cryptocurrency' else 'stock',
-                force_refresh=force_refresh
-            )
-
-            if data is None or data.empty:
-                display_error(f"No data available for {symbol}")
-                return None
-
-            analyzer = TechnicalAnalyzer(data)
-            analysis_results = analyzer.analyze()
-
-            # Save to database
-            db = DatabaseManager()
-            db.save_analysis(symbol, analysis_results)
-
-            return data, analysis_results
-        except InvalidSymbolError as e:
-            display_error(str(e))
-            return None
-        except APIError as e:
-            if "rate limit" in str(e).lower():
-                display_error("API rate limit reached. Please wait a moment and try again.", "warning")
-                # Try to get data from cache with extended age
-                try:
-                    cached_data = fetcher.db.get_cached_data(symbol, max_age_minutes=30)
-                    if cached_data is not None:
-                        display_error("Using cached data due to rate limit", "info")
-                        return pd.DataFrame.from_dict(cached_data), None
-                except Exception as cache_e:
-                    logger.error(f"Error getting cached data: {str(cache_e)}")
-            else:
-                display_error(f"API Error: {str(e)}")
-            return None
-        except Exception as e:
-            display_error(f"An unexpected error occurred: {str(e)}")
-            logger.error(f"Error in analyze_symbol: {str(e)}", exc_info=True)
-            return None
-
     # Add debug information
     st.sidebar.divider()
     st.sidebar.markdown("### Debug Info")
-    if 'last_symbol' in st.session_state:
-        st.sidebar.text(f"Last symbol: {st.session_state.last_symbol}")
-    if hasattr(st.session_state, 'last_analysis'):
-        st.sidebar.text("Analysis data: Available")
-    else:
-        st.sidebar.text("Analysis data: None")
-
-    # Analyze button (kept for explicit analysis)
-    if st.sidebar.button("Analyze"):
-        result = analyze_symbol()
-        if result:
-            data, analysis_results = result
-            st.session_state.last_analysis = (data, analysis_results)
-        else:
-            st.session_state.last_analysis = None
-
-    # Auto-analyze when symbol changes
-    if 'last_symbol' not in st.session_state or st.session_state.last_symbol != symbol:
-        st.session_state.last_symbol = symbol
-        result = analyze_symbol()
-        if result:
-            st.session_state.last_analysis = result
+    st.sidebar.text(f"Current symbol: {symbol}")
+    st.sidebar.text(f"Market type: {market_type}")
+    st.sidebar.text(f"Interval: {interval}")
+    st.sidebar.text(f"Force refresh: {force_refresh}")
 
     # Create tabs for different views
     tab1, tab2 = st.tabs(["Analysis", "Market Movers"])
 
     with tab1:
-        if hasattr(st.session_state, 'last_analysis') and st.session_state.last_analysis:
-            data, analysis_results = st.session_state.last_analysis
+        # Run analysis when the page loads or when inputs change
+        result = analyze_symbol(symbol, interval, market_type, force_refresh)
+
+        if result:
+            data, analysis_results = result
 
             # Display cache status
             if not force_refresh:
@@ -229,7 +209,7 @@ def main():
 
             # Display recent data
             with st.expander("Recent Data"):
-                st.dataframe(data.tail())
+                st.dataframe(data.head())
 
     with tab2:
         try:
